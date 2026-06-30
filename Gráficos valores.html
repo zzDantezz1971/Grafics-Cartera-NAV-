@@ -1,0 +1,559 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cartera — Explorador NAV</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
+<style>
+  :root{
+    --bg:#0F1318;
+    --panel:#171D24;
+    --panel-2:#1C232C;
+    --line:#2A3340;
+    --text:#E7EAEE;
+    --muted:#8B96A5;
+    --muted-2:#5C6675;
+    --up:#4FAE7C;
+    --down:#D9634F;
+    --accent:#D9A04A;
+    --mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+    --serif: Georgia, "Iowan Old Style", "Palatino Linotype", serif;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0;
+    background:var(--bg);
+    color:var(--text);
+    font-family:var(--sans);
+    min-height:100vh;
+  }
+  header{
+    padding:28px 32px 18px;
+    border-bottom:1px solid var(--line);
+  }
+  header h1{
+    font-family:var(--serif);
+    font-weight:400;
+    font-size:28px;
+    margin:0 0 4px;
+    letter-spacing:0.2px;
+  }
+  header p{
+    margin:0;
+    color:var(--muted);
+    font-size:13px;
+  }
+  .layout{
+    display:grid;
+    grid-template-columns:260px 1fr;
+    min-height:calc(100vh - 90px);
+  }
+  @media (max-width:760px){
+    .layout{grid-template-columns:1fr;}
+  }
+  /* Watchlist */
+  .watchlist{
+    border-right:1px solid var(--line);
+    padding:18px 0;
+    overflow-y:auto;
+  }
+  .watchlist-label{
+    font-family:var(--mono);
+    font-size:10px;
+    letter-spacing:1.5px;
+    text-transform:uppercase;
+    color:var(--muted-2);
+    padding:0 20px 10px;
+  }
+  .ticker-item{
+    display:flex;
+    justify-content:space-between;
+    align-items:center;
+    padding:11px 20px;
+    cursor:pointer;
+    border-left:3px solid transparent;
+    transition:background 0.15s, border-color 0.15s;
+  }
+  .ticker-item:hover{ background:var(--panel-2); }
+  .ticker-item.active{
+    background:var(--panel-2);
+    border-left-color:var(--accent);
+  }
+  .ticker-name{
+    display:flex;
+    flex-direction:column;
+    gap:2px;
+  }
+  .ticker-code{
+    font-family:var(--mono);
+    font-size:13px;
+    font-weight:600;
+    letter-spacing:0.3px;
+  }
+  .ticker-sub{
+    font-size:11px;
+    color:var(--muted);
+  }
+  .ticker-trend{
+    font-family:var(--mono);
+    font-size:12px;
+    text-align:right;
+  }
+  .trend-up{ color:var(--up); }
+  .trend-down{ color:var(--down); }
+  .arrow{ font-size:10px; margin-right:3px; }
+
+  /* Main */
+  main{
+    padding:28px 32px 40px;
+  }
+  .panel-head{
+    display:flex;
+    flex-wrap:wrap;
+    justify-content:space-between;
+    align-items:flex-end;
+    gap:18px;
+    margin-bottom:20px;
+  }
+  .panel-title h2{
+    font-family:var(--serif);
+    font-size:24px;
+    font-weight:400;
+    margin:0 0 4px;
+  }
+  .panel-title .isin{
+    font-family:var(--mono);
+    font-size:11px;
+    color:var(--muted-2);
+    letter-spacing:0.5px;
+  }
+  .controls{
+    display:flex;
+    align-items:flex-end;
+    gap:14px;
+    flex-wrap:wrap;
+  }
+  .field{
+    display:flex;
+    flex-direction:column;
+    gap:5px;
+  }
+  .field label{
+    font-family:var(--mono);
+    font-size:10px;
+    letter-spacing:1px;
+    text-transform:uppercase;
+    color:var(--muted);
+  }
+  .field input[type="date"]{
+    background:var(--panel-2);
+    border:1px solid var(--line);
+    color:var(--text);
+    font-family:var(--mono);
+    font-size:13px;
+    padding:7px 10px;
+    border-radius:3px;
+    color-scheme:dark;
+  }
+  .field input[type="date"]:focus{
+    outline:none;
+    border-color:var(--accent);
+  }
+  .range-presets{
+    display:flex;
+    gap:6px;
+  }
+  .range-presets button{
+    background:transparent;
+    border:1px solid var(--line);
+    color:var(--muted);
+    font-family:var(--mono);
+    font-size:11px;
+    padding:7px 11px;
+    border-radius:3px;
+    cursor:pointer;
+    transition:all 0.15s;
+  }
+  .range-presets button:hover{
+    border-color:var(--accent);
+    color:var(--text);
+  }
+
+  .stats-row{
+    display:grid;
+    grid-template-columns:repeat(4,1fr);
+    gap:1px;
+    background:var(--line);
+    border:1px solid var(--line);
+    margin-bottom:22px;
+  }
+  @media (max-width:600px){
+    .stats-row{grid-template-columns:repeat(2,1fr);}
+  }
+  .stat{
+    background:var(--panel);
+    padding:14px 18px;
+  }
+  .stat-label{
+    font-family:var(--mono);
+    font-size:10px;
+    letter-spacing:1px;
+    text-transform:uppercase;
+    color:var(--muted-2);
+    margin-bottom:6px;
+  }
+  .stat-value{
+    font-family:var(--mono);
+    font-size:19px;
+    font-weight:600;
+  }
+
+  .chart-wrap{
+    background:var(--panel);
+    border:1px solid var(--line);
+    border-radius:4px;
+    padding:22px 18px 12px;
+    height:420px;
+    position:relative;
+  }
+  .empty-note{
+    color:var(--muted);
+    font-size:13px;
+    font-family:var(--mono);
+    text-align:center;
+    padding-top:160px;
+  }
+  footer{
+    padding:16px 32px 26px;
+    color:var(--muted-2);
+    font-size:11px;
+    font-family:var(--mono);
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Explorador de NAV — Cartera</h1>
+  <p>Selecciona un activo y un rango de fechas para ver su evolución de NAV (pestaña Histórico).</p>
+</header>
+
+<div class="layout">
+  <nav class="watchlist" id="watchlist">
+    <div class="watchlist-label">Activos</div>
+    <!-- items injected by JS -->
+  </nav>
+
+  <main>
+    <div class="panel-head">
+      <div class="panel-title">
+        <h2 id="assetTitle">—</h2>
+        <div class="isin" id="assetIsin">—</div>
+      </div>
+      <div class="controls">
+        <div class="field">
+          <label for="dateFrom">Desde</label>
+          <input type="date" id="dateFrom">
+        </div>
+        <div class="field">
+          <label for="dateTo">Hasta</label>
+          <input type="date" id="dateTo">
+        </div>
+        <div class="range-presets">
+          <button data-preset="all">Todo</button>
+          <button data-preset="2w">Últ. 2 sem.</button>
+          <button data-preset="1w">Últ. semana</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="stats-row" id="statsRow">
+      <div class="stat"><div class="stat-label">NAV inicial</div><div class="stat-value" id="statStart">—</div></div>
+      <div class="stat"><div class="stat-label">NAV final</div><div class="stat-value" id="statEnd">—</div></div>
+      <div class="stat"><div class="stat-label">Variación</div><div class="stat-value" id="statChange">—</div></div>
+      <div class="stat"><div class="stat-label">Mín / Máx</div><div class="stat-value" id="statRange">—</div></div>
+    </div>
+
+    <div class="chart-wrap">
+      <canvas id="navChart"></canvas>
+      <div class="empty-note" id="emptyNote" style="display:none;">No hay datos suficientes en el rango seleccionado.</div>
+    </div>
+  </main>
+</div>
+
+<footer>Fuente: hoja "Cartera inversiones" — pestaña Histórico · datos junio 2026</footer>
+
+<script>
+// ---- Embedded data (from "Histórico" tab) ----
+const ASSETS = {
+  polar: {
+    label: "Polar Capital", code: "Polar Capital", isin: "IE00BZ4D7648", currency: "€",
+    data: [
+      ["2026-06-08",68.88],["2026-06-09",68.81],["2026-06-10",66.54],["2026-06-11",68.81],
+      ["2026-06-12",70.23],["2026-06-15",73.49],["2026-06-16",72.14],["2026-06-17",72.27],
+      ["2026-06-18",74.56],["2026-06-22",75.53],["2026-06-23",71.60],["2026-06-24",71.05],
+      ["2026-06-25",72.84],["2026-06-26",69.67],["2026-06-29",71.32]
+    ]
+  },
+  mg: {
+    label: "M&G Europa", code: "M&G Europa", isin: "LU1670707527", currency: "€",
+    data: [
+      ["2026-06-09",22.28],["2026-06-10",22.02],["2026-06-11",22.16],["2026-06-12",22.54],
+      ["2026-06-15",22.71],["2026-06-16",22.56],["2026-06-17",22.54],["2026-06-18",22.31],
+      ["2026-06-19",22.37],["2026-06-22",22.29],["2026-06-24",22.32],["2026-06-25",22.53],
+      ["2026-06-26",22.42],["2026-06-29",22.46],["2026-06-30",22.58]
+    ]
+  },
+  is3s: {
+    label: "iShares World", code: "IS3S", isin: "IE00BP3QZB59", currency: "€",
+    data: [
+      ["2026-06-09",67.22],["2026-06-10",66.86],["2026-06-11",67.26],["2026-06-12",69.20],
+      ["2026-06-15",70.05],["2026-06-16",69.58],["2026-06-17",69.60],["2026-06-18",70.05],
+      ["2026-06-19",70.21],["2026-06-22",71.15],["2026-06-23",69.66],["2026-06-24",69.40],
+      ["2026-06-25",70.79],["2026-06-26",70.30],["2026-06-29",68.89],["2026-06-30",69.47]
+    ]
+  },
+  asia: {
+    label: "iShares Asia ex Japón", code: "iShares Asia", isin: "IE000D5R9C23", currency: "€",
+    data: [
+      ["2026-06-09",7.51],["2026-06-10",7.45],["2026-06-11",7.41],["2026-06-12",7.70],
+      ["2026-06-15",7.95],["2026-06-16",7.85],["2026-06-17",7.90],["2026-06-18",8.13],
+      ["2026-06-19",8.11],["2026-06-22",8.29],["2026-06-23",7.88],["2026-06-24",7.88],
+      ["2026-06-25",7.97],["2026-06-26",7.79],["2026-06-29",7.72]
+    ],
+    note: "Vendido el 29/06/2026"
+  },
+  ionq: {
+    label: "IonQ", code: "IONQ", isin: "US46222L1089", currency: "$",
+    data: [
+      ["2026-06-09",56.69],["2026-06-10",56.63],["2026-06-11",57.99],["2026-06-12",57.85],
+      ["2026-06-15",61.18],["2026-06-16",56.06],["2026-06-17",54.69],["2026-06-18",56.55],
+      ["2026-06-22",58.32],["2026-06-23",57.85],["2026-06-24",53.60],["2026-06-25",50.56],
+      ["2026-06-26",49.31],["2026-06-29",53.88],["2026-06-30",53.26]
+    ]
+  },
+  keys: {
+    label: "Keysight Technologies", code: "KEYS", isin: "US49338L1035", currency: "$",
+    data: [
+      ["2026-06-09",331.43],["2026-06-10",324.00],["2026-06-11",340.03],["2026-06-12",350.67],
+      ["2026-06-15",356.94],["2026-06-16",350.29],["2026-06-17",350.70],["2026-06-18",363.67],
+      ["2026-06-22",373.34],["2026-06-23",352.58],["2026-06-24",351.30],["2026-06-25",360.06],
+      ["2026-06-26",328.66],["2026-06-29",340.13],["2026-06-30",350.07]
+    ]
+  },
+  oklo: {
+    label: "OKLO", code: "OKLO", isin: "US02156V1098", currency: "$",
+    data: [
+      ["2026-06-09",56.48],["2026-06-10",54.02],["2026-06-11",57.86],["2026-06-12",57.49],
+      ["2026-06-15",60.74],["2026-06-16",57.45],["2026-06-17",58.82],["2026-06-18",61.17],
+      ["2026-06-22",58.40],["2026-06-23",57.19],["2026-06-24",54.06],["2026-06-25",51.01],
+      ["2026-06-26",50.00],["2026-06-29",52.76],["2026-06-30",52.33]
+    ]
+  },
+  ions: {
+    label: "Ionis Pharmaceuticals", code: "IONS", isin: "US4622221004", currency: "$",
+    data: [
+      ["2026-06-09",74.58],["2026-06-10",73.32],["2026-06-11",73.82],["2026-06-12",73.28],
+      ["2026-06-15",73.96],["2026-06-16",73.09],["2026-06-17",74.31],["2026-06-18",74.12],
+      ["2026-06-22",75.89],["2026-06-23",75.99],["2026-06-24",76.52],["2026-06-25",78.34],
+      ["2026-06-26",81.18],["2026-06-29",80.69],["2026-06-30",79.29]
+    ]
+  },
+  pgy: {
+    label: "Pagaya Technologies", code: "PGY", isin: "IL0011858912", currency: "$",
+    data: [
+      ["2026-06-09",14.80],["2026-06-10",14.50],["2026-06-11",15.75],["2026-06-12",15.42],
+      ["2026-06-15",15.68],["2026-06-16",15.61],["2026-06-17",15.03]
+    ],
+    note: "Vendido el 18/06/2026 → sustituido por BIOA"
+  },
+  bioa: {
+    label: "BioAge Labs", code: "BIOA", isin: "US09077V1008", currency: "$",
+    data: [
+      ["2026-06-18",20.77],["2026-06-22",21.47],["2026-06-23",22.32],["2026-06-24",22.99],
+      ["2026-06-25",22.62],["2026-06-26",23.76],["2026-06-29",24.95],["2026-06-30",24.51]
+    ],
+    note: "Comprado el 18/06/2026, sustituye a PGY"
+  },
+  dip: {
+    label: "DIP Paradigma", code: "DIP Paradigma", isin: "LU2388163516", currency: "€",
+    data: [
+      ["2026-06-26",21.36],["2026-06-29",21.16]
+    ],
+    note: "Solo 2 registros disponibles este mes"
+  }
+};
+
+// ---- State ----
+let currentKey = "polar";
+let chart = null;
+
+const watchlistEl = document.getElementById("watchlist");
+const fromEl = document.getElementById("dateFrom");
+const toEl = document.getElementById("dateTo");
+
+function fmt(n, currency){
+  return n.toLocaleString("es-ES", {minimumFractionDigits:2, maximumFractionDigits:2}) + " " + currency;
+}
+
+function buildWatchlist(){
+  Object.entries(ASSETS).forEach(([key, a]) => {
+    const first = a.data[0][1], last = a.data[a.data.length-1][1];
+    const pct = ((last-first)/first*100);
+    const up = pct >= 0;
+    const item = document.createElement("div");
+    item.className = "ticker-item" + (key===currentKey ? " active" : "");
+    item.dataset.key = key;
+    item.innerHTML = `
+      <div class="ticker-name">
+        <span class="ticker-code">${a.code}</span>
+        <span class="ticker-sub">${a.label}</span>
+      </div>
+      <div class="ticker-trend ${up?'trend-up':'trend-down'}">
+        <span class="arrow">${up?'▲':'▼'}</span>${pct.toFixed(1)}%
+      </div>`;
+    item.addEventListener("click", () => selectAsset(key));
+    watchlistEl.appendChild(item);
+  });
+}
+
+function selectAsset(key){
+  currentKey = key;
+  document.querySelectorAll(".ticker-item").forEach(el=>{
+    el.classList.toggle("active", el.dataset.key === key);
+  });
+  const a = ASSETS[key];
+  document.getElementById("assetTitle").textContent = a.label;
+  document.getElementById("assetIsin").textContent = a.isin + (a.note ? "  ·  " + a.note : "");
+
+  const dates = a.data.map(d=>d[0]);
+  fromEl.min = dates[0]; fromEl.max = dates[dates.length-1];
+  toEl.min = dates[0]; toEl.max = dates[dates.length-1];
+  fromEl.value = dates[0];
+  toEl.value = dates[dates.length-1];
+
+  render();
+}
+
+function getFilteredData(){
+  const a = ASSETS[currentKey];
+  const from = fromEl.value, to = toEl.value;
+  return a.data.filter(([d]) => d >= from && d <= to);
+}
+
+function render(){
+  const a = ASSETS[currentKey];
+  const rows = getFilteredData();
+  const emptyNote = document.getElementById("emptyNote");
+  const canvas = document.getElementById("navChart");
+
+  if(rows.length < 1){
+    emptyNote.style.display = "block";
+    canvas.style.display = "none";
+    document.getElementById("statStart").textContent = "—";
+    document.getElementById("statEnd").textContent = "—";
+    document.getElementById("statChange").textContent = "—";
+    document.getElementById("statRange").textContent = "—";
+    if(chart){ chart.destroy(); chart = null; }
+    return;
+  }
+  emptyNote.style.display = "none";
+  canvas.style.display = "block";
+
+  const labels = rows.map(([d]) => {
+    const [y,m,day] = d.split("-");
+    return `${day}/${m}`;
+  });
+  const values = rows.map(r => r[1]);
+  const first = values[0], last = values[values.length-1];
+  const change = last - first;
+  const changePct = (change/first*100);
+  const min = Math.min(...values), max = Math.max(...values);
+  const up = change >= 0;
+
+  document.getElementById("statStart").textContent = fmt(first, a.currency);
+  document.getElementById("statEnd").textContent = fmt(last, a.currency);
+  const changeEl = document.getElementById("statChange");
+  changeEl.textContent = (up?"+":"") + fmt(change, a.currency) + "  (" + (up?"+":"") + changePct.toFixed(2) + "%)";
+  changeEl.style.color = up ? "var(--up)" : "var(--down)";
+  document.getElementById("statRange").textContent = fmt(min, a.currency) + " / " + fmt(max, a.currency);
+
+  const lineColor = up ? "#4FAE7C" : "#D9634F";
+
+  if(chart) chart.destroy();
+  chart = new Chart(canvas.getContext("2d"), {
+    type: "line",
+    data: {
+      labels: labels,
+      datasets: [{
+        label: "NAV (" + a.currency + ")",
+        data: values,
+        borderColor: lineColor,
+        backgroundColor: lineColor + "22",
+        pointBackgroundColor: lineColor,
+        pointRadius: 3,
+        pointHoverRadius: 5,
+        borderWidth: 2,
+        fill: true,
+        tension: 0.25
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: "#1C232C",
+          titleColor: "#E7EAEE",
+          bodyColor: "#E7EAEE",
+          borderColor: "#2A3340",
+          borderWidth: 1,
+          padding: 10,
+          callbacks: {
+            label: (ctx) => "NAV: " + fmt(ctx.parsed.y, a.currency)
+          }
+        }
+      },
+      scales: {
+        x: {
+          grid: { color: "#2A3340" },
+          ticks: { color: "#8B96A5", font: { family: "ui-monospace, monospace", size: 11 } }
+        },
+        y: {
+          grid: { color: "#2A3340" },
+          ticks: { color: "#8B96A5", font: { family: "ui-monospace, monospace", size: 11 } }
+        }
+      }
+    }
+  });
+}
+
+document.querySelectorAll(".range-presets button").forEach(btn => {
+  btn.addEventListener("click", () => {
+    const a = ASSETS[currentKey];
+    const dates = a.data.map(d=>d[0]);
+    const last = dates[dates.length-1];
+    if(btn.dataset.preset === "all"){
+      fromEl.value = dates[0];
+      toEl.value = last;
+    } else {
+      const n = btn.dataset.preset === "2w" ? 10 : 5; // ~trading days
+      const idx = Math.max(0, dates.length - n);
+      fromEl.value = dates[idx];
+      toEl.value = last;
+    }
+    render();
+  });
+});
+
+fromEl.addEventListener("change", render);
+toEl.addEventListener("change", render);
+
+buildWatchlist();
+selectAsset(currentKey);
+</script>
+</body>
+</html>
