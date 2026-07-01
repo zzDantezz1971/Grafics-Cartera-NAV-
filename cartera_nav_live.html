@@ -277,6 +277,12 @@ function slugify(name){
   return name.trim().toLowerCase().replace(/[^a-z0-9]+/g,"_");
 }
 
+// Quita acentos para poder cruzar nombres aunque el CSV llegue con una
+// codificación de caracteres defectuosa (p.ej. "AcciÃ³n" en vez de "Acción").
+function stripAccents(s){
+  return s.normalize("NFD").replace(/[\u0300-\u036f]/g,"");
+}
+
 // Parses "8/06/2026" or "08/06/2026" -> "2026-06-08"
 function parseSpanishDate(s){
   if(!s) return null;
@@ -531,7 +537,11 @@ async function loadData(){
     const url = SHEET_CSV_URL + (SHEET_CSV_URL.includes("?") ? "&" : "?") + "_=" + Date.now();
     const res = await fetch(url, { cache: "no-store" });
     if(!res.ok) throw new Error("Respuesta HTTP " + res.status + ". Revisa que la hoja siga publicada.");
-    const text = await res.text();
+    // Forzamos la decodificación como UTF-8 explícitamente: el navegador a veces
+    // adivina mal la codificación del CSV publicado por Google (tildes/ñ rotas),
+    // lo que puede descuadrar el parseo de columnas en filas con esos caracteres.
+    const buffer = await res.arrayBuffer();
+    const text = new TextDecoder("utf-8").decode(buffer);
     if(text.trim().startsWith("<")) throw new Error("La URL no devuelve un CSV (parece HTML). Vuelve a publicar la hoja en formato CSV.");
 
     const parsed = buildAssetsFromCsv(text);
