@@ -163,6 +163,7 @@
     cursor:pointer; transition:all 0.15s;
   }
   .range-presets button:hover{ border-color:var(--accent); color:var(--text); }
+  .range-presets button.active{ border-color:var(--accent); color:var(--text); background:var(--panel-2); }
 
   .compare-toggle{
     display:flex; align-items:center; gap:8px;
@@ -253,6 +254,13 @@
           <button data-preset="1m">Últ. mes</button>
           <button data-preset="2w">Últ. 2 sem.</button>
         </div>
+        <div class="field">
+          <label>Métrica</label>
+          <div class="range-presets" id="metricToggle">
+            <button data-metric="nav" class="active">NAV</button>
+            <button data-metric="plusvalia">Plusvalía</button>
+          </div>
+        </div>
         <div class="field" id="normalizeField" style="display:none;">
           <label for="normalizeToggle">Comparar en %</label>
           <label class="switch">
@@ -264,8 +272,8 @@
     </div>
 
     <div class="stats-row" id="statsRow">
-      <div class="stat"><div class="stat-label">NAV inicial</div><div class="stat-value" id="statStart">—</div></div>
-      <div class="stat"><div class="stat-label">NAV final</div><div class="stat-value" id="statEnd">—</div></div>
+      <div class="stat"><div class="stat-label" id="statLabelStart">NAV inicial</div><div class="stat-value" id="statStart">—</div></div>
+      <div class="stat"><div class="stat-label" id="statLabelEnd">NAV final</div><div class="stat-value" id="statEnd">—</div></div>
       <div class="stat"><div class="stat-label">Variación</div><div class="stat-value" id="statChange">—</div></div>
       <div class="stat"><div class="stat-label">Mín / Máx</div><div class="stat-value" id="statRange">—</div></div>
     </div>
@@ -305,9 +313,10 @@ const ASSET_META = {
   "DIP Paradigma":         { isin: "LU2388163516", currency: "€" }
 };
 
-let ASSETS = {};       // { key: { label, isin, currency, data:[[iso,nav],...] } }
+let ASSETS = {};       // { key: { label, isin, currency, data:[[iso,nav,plus],...] } }
 let selectedKeys = new Set();
 let chart = null;
+let currentMetric = "nav"; // "nav" | "plusvalia"
 
 // Paleta de colores estable, uno por activo (por orden alfabético de key)
 const PALETTE = ["#4FAE7C","#D9A04A","#5B8FD9","#D9634F","#B47FD9","#4FC4C4","#D9C24F","#E08FB0","#7FA6D9","#8FD96A","#D97F4F","#6A8FD9"];
@@ -394,6 +403,8 @@ function buildAssetsFromCsv(text){
   const idxFecha = header.indexOf("fecha");
   const idxNombre = header.indexOf("nombre");
   const idxNav = header.indexOf("nav");
+  let idxPlus = header.indexOf("plusvalía");
+  if(idxPlus === -1) idxPlus = header.findIndex(h => stripAccents(h) === "plusvalia");
 
   if(idxFecha === -1 || idxNombre === -1 || idxNav === -1){
     throw new Error("No se encontraron las columnas 'Fecha', 'Nombre' y 'NAV' en la hoja.");
@@ -406,6 +417,7 @@ function buildAssetsFromCsv(text){
     const name = (row[idxNombre] || "").trim();
     const iso = parseSpanishDate(row[idxFecha]);
     const nav = parseSpanishNumber(row[idxNav]);
+    const plus = idxPlus > -1 ? parseSpanishNumber(row[idxPlus]) : null;
     if(!name || !iso || nav === null) continue;
 
     const key = slugify(name);
@@ -419,11 +431,13 @@ function buildAssetsFromCsv(text){
       };
     }
     // Last value wins if a date repeats for the same asset
-    assets[key].dataMap[iso] = nav;
+    assets[key].dataMap[iso] = { nav, plus };
   }
 
   Object.values(assets).forEach(a => {
-    a.data = Object.entries(a.dataMap).sort((x,y)=> x[0] < y[0] ? -1 : 1);
+    a.data = Object.entries(a.dataMap)
+      .sort((x,y)=> x[0] < y[0] ? -1 : 1)
+      .map(([iso, v]) => [iso, v.nav, v.plus]);
     delete a.dataMap;
   });
 
@@ -506,11 +520,17 @@ function syncHeaderAndRange(){
 function getFilteredData(key){
   const a = ASSETS[key];
   const from = fromEl.value, to = toEl.value;
-  return a.data.filter(([d]) => d >= from && d <= to);
+  return a.data
+    .filter(([d]) => d >= from && d <= to)
+    .map(([d, nav, plus]) => [d, currentMetric === "plusvalia" ? plus : nav])
+    .filter(([, v]) => v !== null && v !== undefined);
 }
 
 function render(){
   const keys = [...selectedKeys];
+  const metricLabel = currentMetric === "plusvalia" ? "Plusvalía" : "NAV";
+  document.getElementById("statLabelStart").textContent = metricLabel + " inicial";
+  document.getElementById("statLabelEnd").textContent = metricLabel + " final";
   const emptyNote = document.getElementById("emptyNote");
   const canvas = document.getElementById("navChart");
   const normalize = normalizeToggle.checked && keys.length > 1;
@@ -664,6 +684,15 @@ document.querySelectorAll(".range-presets button").forEach(btn => {
 });
 
 normalizeToggle.addEventListener("change", render);
+
+document.querySelectorAll("#metricToggle button").forEach(btn => {
+  btn.addEventListener("click", () => {
+    if(currentMetric === btn.dataset.metric) return;
+    currentMetric = btn.dataset.metric;
+    document.querySelectorAll("#metricToggle button").forEach(b => b.classList.toggle("active", b === btn));
+    render();
+  });
+});
 
 fromEl.addEventListener("change", render);
 toEl.addEventListener("change", render);
