@@ -259,6 +259,7 @@
           <div class="range-presets" id="metricToggle">
             <button data-metric="nav" class="active">NAV</button>
             <button data-metric="plusvalia">Plusvalía</button>
+            <button data-metric="rentabilidad">Rentabilidad</button>
           </div>
         </div>
         <div class="field" id="normalizeField" style="display:none;">
@@ -395,6 +396,15 @@ function parseCsv(text){
   return rows;
 }
 
+// Parses percentage strings like "12,34%" or "-3,26 %" -> 12.34 / -3.26
+function parseSpanishPercent(s){
+  if(s === undefined || s === null) return null;
+  s = String(s).trim();
+  if(s === "") return null;
+  s = s.replace(/%/g,"").trim();
+  return parseSpanishNumber(s);
+}
+
 function buildAssetsFromCsv(text){
   const rows = parseCsv(text);
   if(rows.length < 2) throw new Error("La hoja parece vacía.");
@@ -405,6 +415,7 @@ function buildAssetsFromCsv(text){
   const idxNav = header.indexOf("nav");
   let idxPlus = header.indexOf("plusvalía");
   if(idxPlus === -1) idxPlus = header.findIndex(h => stripAccents(h) === "plusvalia");
+  let idxRent = header.indexOf("rentabilidad");
 
   if(idxFecha === -1 || idxNombre === -1 || idxNav === -1){
     throw new Error("No se encontraron las columnas 'Fecha', 'Nombre' y 'NAV' en la hoja.");
@@ -418,6 +429,7 @@ function buildAssetsFromCsv(text){
     const iso = parseSpanishDate(row[idxFecha]);
     const nav = parseSpanishNumber(row[idxNav]);
     const plus = idxPlus > -1 ? parseSpanishNumber(row[idxPlus]) : null;
+    const rent = idxRent > -1 ? parseSpanishPercent(row[idxRent]) : null;
     if(!name || !iso || nav === null) continue;
 
     const key = slugify(name);
@@ -431,13 +443,13 @@ function buildAssetsFromCsv(text){
       };
     }
     // Last value wins if a date repeats for the same asset
-    assets[key].dataMap[iso] = { nav, plus };
+    assets[key].dataMap[iso] = { nav, plus, rent };
   }
 
   Object.values(assets).forEach(a => {
     a.data = Object.entries(a.dataMap)
       .sort((x,y)=> x[0] < y[0] ? -1 : 1)
-      .map(([iso, v]) => [iso, v.nav, v.plus]);
+      .map(([iso, v]) => [iso, v.nav, v.plus, v.rent]);
     delete a.dataMap;
   });
 
@@ -500,7 +512,7 @@ function syncHeaderAndRange(){
   } else {
     document.getElementById("assetTitle").textContent = keys.length + " activos seleccionados";
     document.getElementById("assetIsin").textContent = keys.map(k => ASSETS[k].label).join(" · ");
-    normalizeField.style.display = "flex";
+    normalizeField.style.display = currentMetric === "rentabilidad" ? "none" : "flex";
   }
 
   let minDate = null, maxDate = null;
@@ -522,18 +534,29 @@ function getFilteredData(key){
   const from = fromEl.value, to = toEl.value;
   return a.data
     .filter(([d]) => d >= from && d <= to)
-    .map(([d, nav, plus]) => [d, currentMetric === "plusvalia" ? plus : nav])
+    .map(([d, nav, plus, rent]) => {
+      const v = currentMetric === "plusvalia" ? plus : currentMetric === "rentabilidad" ? rent : nav;
+      return [d, v];
+    })
     .filter(([, v]) => v !== null && v !== undefined);
+}
+
+// Formatea un valor segun la metrica activa: € / $ para NAV y Plusvalía, % para Rentabilidad
+function fmtMetric(n, currency){
+  if(currentMetric === "rentabilidad"){
+    return n.toLocaleString("es-ES", {minimumFractionDigits:2, maximumFractionDigits:2}) + "%";
+  }
+  return fmt(n, currency);
 }
 
 function render(){
   const keys = [...selectedKeys];
-  const metricLabel = currentMetric === "plusvalia" ? "Plusvalía" : "NAV";
+  const metricLabel = currentMetric === "plusvalia" ? "Plusvalía" : currentMetric === "rentabilidad" ? "Rentabilidad" : "NAV";
   document.getElementById("statLabelStart").textContent = metricLabel + " inicial";
   document.getElementById("statLabelEnd").textContent = metricLabel + " final";
   const emptyNote = document.getElementById("emptyNote");
   const canvas = document.getElementById("navChart");
-  const normalize = normalizeToggle.checked && keys.length > 1;
+  const normalize = currentMetric !== "rentabilidad" && normalizeToggle.checked && keys.length > 1;
 
   const seriesByKey = {};
   keys.forEach(k => { seriesByKey[k] = getFilteredData(k); });
@@ -569,12 +592,12 @@ function render(){
     const min = Math.min(...values), max = Math.max(...values);
     const up = change >= 0;
 
-    document.getElementById("statStart").textContent = fmt(first, refCurrency);
-    document.getElementById("statEnd").textContent = fmt(last, refCurrency);
+    document.getElementById("statStart").textContent = fmtMetric(first, refCurrency);
+    document.getElementById("statEnd").textContent = fmtMetric(last, refCurrency);
     const changeEl = document.getElementById("statChange");
-    changeEl.textContent = (up?"+":"") + fmt(change, refCurrency) + "  (" + (up?"+":"") + changePct.toFixed(2) + "%)";
+    changeEl.textContent = (up?"+":"") + fmtMetric(change, refCurrency) + "  (" + (up?"+":"") + changePct.toFixed(2) + "%)";
     changeEl.style.color = up ? "var(--up)" : "var(--down)";
-    document.getElementById("statRange").textContent = fmt(min, refCurrency) + " / " + fmt(max, refCurrency);
+    document.getElementById("statRange").textContent = fmtMetric(min, refCurrency) + " / " + fmtMetric(max, refCurrency);
   }
   if(keys.length > 1){
     document.getElementById("statsHint").style.display = "block";
@@ -639,7 +662,7 @@ function render(){
               if(ctx.parsed.y === null) return null;
               const ds = ctx.dataset;
               if(normalize) return ds.label + ": " + (ctx.parsed.y>=0?"+":"") + ctx.parsed.y.toFixed(2) + "%";
-              return ds.label + ": " + fmt(ctx.parsed.y, ds.currency);
+              return ds.label + ": " + fmtMetric(ctx.parsed.y, ds.currency);
             }
           }
         }
@@ -650,7 +673,7 @@ function render(){
           grid: { color: "#2A3340" },
           ticks: {
             color: "#8B96A5", font: { family: "ui-monospace, monospace", size: 11 },
-            callback: (val) => normalize ? val.toFixed(0) + "%" : val
+            callback: (val) => (normalize || currentMetric === "rentabilidad") ? val.toFixed(0) + "%" : val
           }
         }
       }
@@ -690,6 +713,7 @@ document.querySelectorAll("#metricToggle button").forEach(btn => {
     if(currentMetric === btn.dataset.metric) return;
     currentMetric = btn.dataset.metric;
     document.querySelectorAll("#metricToggle button").forEach(b => b.classList.toggle("active", b === btn));
+    syncHeaderAndRange();
     render();
   });
 });
