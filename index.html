@@ -290,7 +290,7 @@
   </main>
 </div>
 
-<footer>Fuente: hoja "Cartera inversiones" — pestaña Histórico (publicada como CSV) · <span id="lastUpdate"></span></footer>
+<footer>Fuente: hoja "Cartera inversiones" — pestaña Histórico (publicada como CSV), filtrada a los activos vigentes en Cartera · <span id="lastUpdate"></span></footer>
 
 <script>
 // ============================================================
@@ -300,18 +300,42 @@ const SHEET_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vTZ6yiNNd
 
 // Metadatos conocidos de cada activo (ISIN, moneda). Si aparece un activo
 // nuevo en la hoja que no está aquí, se muestra igualmente con datos genéricos.
+// ============================================================
+// ACTIVOS VIGENTES EN CARTERA (por ISIN). Esta lista la mantiene
+// Claude a partir de la pestaña "Cartera" — pídele que la actualice
+// si compras o vendes algo, ya que la página no puede leer esa
+// pestaña por sí sola (no está publicada como CSV).
+// Última comprobación: 21/09/2026
+// ============================================================
+const CURRENT_HOLDINGS_ISINS = new Set([
+  "IE00BZ4D7648", // Polar Capital
+  "LU1670707527", // M&G Europa
+  "LU1493953001", // T. Rowe Price Global
+  "IE00BP3QZB59", // iShares MSCI World
+  "IE00BK5BR626", // Vanguard FTSE World Acum.
+  "IE00BYZK4669", // iShares Ageing Population
+  "US46222L1089", // IONQ
+  "US0378331005"  // Apple
+]);
+
 const ASSET_META = {
-  "Polar Capital":        { isin: "IE00BZ4D7648", currency: "€" },
-  "M&G Europa":            { isin: "LU1670707527", currency: "€" },
-  "iShares World":         { isin: "IE00BP3QZB59", currency: "€" },
-  "iShares Asia":          { isin: "IE000D5R9C23", currency: "€" },
-  "IONQ":                  { isin: "US46222L1089", currency: "$" },
-  "KEYS":                  { isin: "US49338L1035", currency: "$" },
-  "OKLO":                  { isin: "US02156V1098", currency: "$" },
-  "IONS":                  { isin: "US4622221004", currency: "$" },
-  "PGY":                   { isin: "IL0011858912", currency: "$" },
-  "BIOA":                  { isin: "US09077V1008", currency: "$" },
-  "DIP Paradigma":         { isin: "LU2388163516", currency: "€" }
+  "Polar Capital":            { isin: "IE00BZ4D7648", currency: "€" },
+  "M&G Europa":               { isin: "LU1670707527", currency: "€" },
+  "T. Rowe Price Global":     { isin: "LU1493953001", currency: "€" },
+  "iShares World":            { isin: "IE00BP3QZB59", currency: "€" },
+  "iShares MSCI World":       { isin: "IE00BP3QZB59", currency: "€" },
+  "Vanguard FTSE World Acum.":{ isin: "IE00BK5BR626", currency: "€" },
+  "iShares Ageing Population":{ isin: "IE00BYZK4669", currency: "€" },
+  "IONQ":                     { isin: "US46222L1089", currency: "$" },
+  "Apple":                    { isin: "US0378331005", currency: "$" },
+  "APPLE":                    { isin: "US0378331005", currency: "$" },
+  "iShares Asia":             { isin: "IE000D5R9C23", currency: "€" },
+  "KEYS":                     { isin: "US49338L1035", currency: "$" },
+  "OKLO":                     { isin: "US02156V1098", currency: "$" },
+  "IONS":                     { isin: "US4622221004", currency: "$" },
+  "PGY":                      { isin: "IL0011858912", currency: "$" },
+  "BIOA":                     { isin: "US09077V1008", currency: "$" },
+  "DIP Paradigma":            { isin: "LU2388163516", currency: "€" }
 };
 
 let ASSETS = {};       // { key: { label, isin, currency, data:[[iso,nav,plus],...] } }
@@ -412,6 +436,7 @@ function buildAssetsFromCsv(text){
   const header = rows[0].map(h => h.trim().toLowerCase());
   const idxFecha = header.indexOf("fecha");
   const idxNombre = header.indexOf("nombre");
+  const idxIsin = header.indexOf("isin");
   const idxNav = header.indexOf("nav");
   let idxPlus = header.indexOf("plusvalía");
   if(idxPlus === -1) idxPlus = header.findIndex(h => stripAccents(h) === "plusvalia");
@@ -426,18 +451,24 @@ function buildAssetsFromCsv(text){
     const row = rows[r];
     if(!row || row.length <= Math.max(idxFecha, idxNombre, idxNav)) continue;
     const name = (row[idxNombre] || "").trim();
+    const isinFromRow = idxIsin > -1 ? (row[idxIsin] || "").trim() : "";
     const iso = parseSpanishDate(row[idxFecha]);
     const nav = parseSpanishNumber(row[idxNav]);
     const plus = idxPlus > -1 ? parseSpanishNumber(row[idxPlus]) : null;
     const rent = idxRent > -1 ? parseSpanishPercent(row[idxRent]) : null;
     if(!name || !iso || nav === null) continue;
 
+    // Filtro: solo activos que están en Cartera AHORA (por ISIN, no por
+    // nombre, para no romperse si el nombre cambia entre pestañas).
+    const meta = ASSET_META[name] || {};
+    const isin = isinFromRow || meta.isin || "";
+    if(!CURRENT_HOLDINGS_ISINS.has(isin)) continue;
+
     const key = slugify(name);
     if(!assets[key]){
-      const meta = ASSET_META[name] || {};
       assets[key] = {
         label: name,
-        isin: meta.isin || "—",
+        isin: isin || "—",
         currency: meta.currency || "€",
         dataMap: {}
       };
@@ -752,7 +783,7 @@ async function loadData(){
     if(text.trim().startsWith("<")) throw new Error("La URL no devuelve un CSV (parece HTML). Vuelve a publicar la hoja en formato CSV.");
 
     const parsed = buildAssetsFromCsv(text);
-    if(Object.keys(parsed).length === 0) throw new Error("No se encontraron filas válidas en la hoja.");
+    if(Object.keys(parsed).length === 0) throw new Error("No se encontraron filas de tus activos actuales (revisa CURRENT_HOLDINGS_ISINS en el código, o que Histórico tenga la columna ISIN).");
 
     ASSETS = parsed;
     document.getElementById("loadNote").style.display = "none";
