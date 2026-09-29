@@ -260,10 +260,16 @@
           <label for="dateTo">Hasta</label>
           <input type="date" id="dateTo">
         </div>
-        <div class="range-presets">
-          <button data-preset="all">Todo</button>
-          <button data-preset="1m">Últ. mes</button>
-          <button data-preset="2w">Últ. 2 sem.</button>
+        <div class="field">
+          <label>Periodo</label>
+          <div class="range-presets" id="presetToggle">
+            <button data-preset="1m">1M</button>
+            <button data-preset="3m">3M</button>
+            <button data-preset="6m">6M</button>
+            <button data-preset="ytd">Año</button>
+            <button data-preset="1y">1A</button>
+            <button data-preset="all" class="active">Todo</button>
+          </div>
         </div>
         <div class="field">
           <label>Métrica</label>
@@ -278,6 +284,14 @@
           <div class="range-presets" id="chartTypeToggle">
             <button data-chart-type="line" class="active">Líneas</button>
             <button data-chart-type="bar">Barras</button>
+          </div>
+        </div>
+        <div class="field">
+          <label>Medias móviles</label>
+          <div class="range-presets" id="maToggle">
+            <button data-ma="20">MM20</button>
+            <button data-ma="50">MM50</button>
+            <button data-ma="200">MM200</button>
           </div>
         </div>
         <div class="field" id="normalizeField" style="display:none;">
@@ -350,6 +364,9 @@ let selectedKeys = new Set();
 let chart = null;
 let currentMetric = "nav"; // "nav" | "plusvalia"
 let currentChartType = "line"; // "line" | "bar"
+let currentPreset = "all";     // periodo activo, o null si las fechas se eligieron a mano
+const activeMAs = new Set();   // periodos de media móvil activos (nº de registros)
+const MA_COLORS = { 20: "#7FC8F8", 50: "#F2C14E", 200: "#F25F5C" };
 
 // Paleta de colores estable, uno por activo (por orden alfabético de key)
 const PALETTE = ["#4FAE7C","#D9A04A","#5B8FD9","#D9634F","#B47FD9","#4FC4C4","#D9C24F","#E08FB0","#7FA6D9","#8FD96A","#D97F4F","#6A8FD9"];
@@ -588,6 +605,12 @@ function syncHeaderAndRange(){
 
   fromEl.min = minDate; fromEl.max = maxDate;
   toEl.min = minDate; toEl.max = maxDate;
+  // Con un periodo activo, las fechas se recalculan para el activo elegido
+  if(currentPreset){
+    fromEl.value = presetFrom(currentPreset, minDate, maxDate);
+    toEl.value = maxDate;
+    return;
+  }
   // Si las fechas actuales ya no encajan en el nuevo rango, las reajustamos
   if(!fromEl.value || fromEl.value < minDate || fromEl.value > maxDate) fromEl.value = minDate;
   if(!toEl.value || toEl.value > maxDate || toEl.value < minDate) toEl.value = maxDate;
@@ -611,6 +634,23 @@ function fmtMetric(n, currency){
     return n.toLocaleString("es-ES", {minimumFractionDigits:2, maximumFractionDigits:2}) + "%";
   }
   return fmt(n, currency);
+}
+
+// Media móvil simple de N registros sobre la serie completa de la métrica
+// activa (no solo el rango visible), para que la media ya esté "arrancada"
+// al principio del periodo mostrado. Devuelve Map fecha -> valor.
+function movingAverage(key, n){
+  const series = ASSETS[key].data
+    .map(([d, nav, plus, rent]) => [d, currentMetric === "plusvalia" ? plus : currentMetric === "rentabilidad" ? rent : nav])
+    .filter(([, v]) => v !== null && v !== undefined);
+  const out = new Map();
+  let sum = 0;
+  series.forEach(([d, v], i) => {
+    sum += v;
+    if(i >= n) sum -= series[i - n][1];
+    if(i >= n - 1) out.set(d, sum / n);
+  });
+  return { values: out, count: series.length };
 }
 
 function render(){
@@ -666,12 +706,41 @@ function render(){
     changeEl.style.color = up ? "var(--up)" : "var(--down)";
     document.getElementById("statRange").textContent = fmtMetric(min, refCurrency) + " / " + fmtMetric(max, refCurrency);
   }
+  // Medias móviles (solo con un activo seleccionado)
+  const maDatasets = [];
+  const maMissing = [];
+  if(keys.length === 1){
+    [...activeMAs].sort((a,b) => a-b).forEach(n => {
+      const { values, count } = movingAverage(refKey, n);
+      if(count < n){ maMissing.push(`MM${n} necesita ${n} registros (hay ${count})`); return; }
+      maDatasets.push({
+        type: "line",
+        label: "MM" + n,
+        data: allDates.map(d => values.has(d) ? values.get(d) : null),
+        borderColor: MA_COLORS[n],
+        backgroundColor: MA_COLORS[n],
+        borderWidth: 1.5,
+        borderDash: [6, 4],
+        pointRadius: 0,
+        pointHoverRadius: 3,
+        fill: false,
+        tension: 0.2,
+        spanGaps: true,
+        order: 0, // por encima de la serie principal
+        currency: ASSETS[refKey].currency
+      });
+    });
+  }
+
+  const hintEl = document.getElementById("statsHint");
   if(keys.length > 1){
-    document.getElementById("statsHint").style.display = "block";
-    document.getElementById("statsHint").textContent =
-      `Estadísticas de "${ASSETS[refKey].label}" — el gráfico muestra los ${keys.length} activos.`;
+    hintEl.style.display = "block";
+    hintEl.textContent = `Estadísticas de "${ASSETS[refKey].label}" — el gráfico muestra los ${keys.length} activos.`;
+  } else if(maMissing.length){
+    hintEl.style.display = "block";
+    hintEl.textContent = maMissing.join(" · ") + ".";
   } else {
-    document.getElementById("statsHint").style.display = "none";
+    hintEl.style.display = "none";
   }
 
   const datasets = keys.map(k => {
@@ -698,6 +767,7 @@ function render(){
         hoverBackgroundColor: color,
         borderWidth: 0,
         borderRadius: 2,
+        order: 1,
         currency: a.currency
       };
     }
@@ -707,12 +777,14 @@ function render(){
       borderColor: color,
       backgroundColor: color + "1A",
       pointBackgroundColor: color,
-      pointRadius: keys.length > 1 ? 2 : 3,
+      // Con muchos registros los puntos engordan la línea: se ocultan
+      pointRadius: allDates.length > 60 ? 0 : (keys.length > 1 ? 2 : 3),
       pointHoverRadius: 5,
       borderWidth: 2,
       fill: keys.length === 1,
       tension: 0.25,
       spanGaps: true,
+      order: 1,
       currency: a.currency
     };
   });
@@ -720,17 +792,18 @@ function render(){
   if(chart) chart.destroy();
   chart = new Chart(canvas.getContext("2d"), {
     type: currentChartType,
-    data: { labels: labels, datasets: datasets },
+    data: { labels: labels, datasets: datasets.concat(maDatasets) },
     options: {
       responsive: true,
       maintainAspectRatio: false,
       interaction: { mode: "index", intersect: false },
       plugins: {
         legend: {
-          display: keys.length > 1,
+          display: keys.length > 1 || maDatasets.length > 0,
           position: "top",
           align: "start",
-          labels: { color: "#8B96A5", font: { family: "ui-monospace, monospace", size: 11 }, boxWidth: 10, boxHeight: 10, usePointStyle: true, pointStyle: "circle" }
+          labels: { color: "#8B96A5", font: { family: "ui-monospace, monospace", size: 11 }, boxWidth: 10, boxHeight: 10, usePointStyle: true, pointStyle: "circle",
+                    sort: (x, y) => x.datasetIndex - y.datasetIndex }
         },
         tooltip: {
           backgroundColor: "#1C232C", titleColor: "#E7EAEE", bodyColor: "#E7EAEE",
@@ -759,27 +832,36 @@ function render(){
   });
 }
 
-document.querySelectorAll(".range-presets button[data-preset]").forEach(btn => {
+// Fecha de inicio de un periodo, contado hacia atrás desde la última fecha
+// con datos (no desde hoy) y sin salirse del rango disponible.
+function presetFrom(preset, minDate, maxDate){
+  if(preset === "all") return minDate;
+  const d = new Date(maxDate + "T00:00:00Z");
+  if(preset === "ytd") d.setUTCMonth(0, 1);
+  else d.setUTCMonth(d.getUTCMonth() - { "1m": 1, "3m": 3, "6m": 6, "1y": 12 }[preset]);
+  const from = d.toISOString().slice(0,10);
+  return from < minDate ? minDate : from;
+}
+
+function highlightPreset(){
+  document.querySelectorAll("#presetToggle button").forEach(b => b.classList.toggle("active", b.dataset.preset === currentPreset));
+}
+
+document.querySelectorAll("#presetToggle button").forEach(btn => {
   btn.addEventListener("click", () => {
+    currentPreset = btn.dataset.preset;
+    highlightPreset();
     if(selectedKeys.size === 0) return;
-    // Usamos el rango combinado de todos los activos seleccionados
-    let minDate = null, maxDate = null;
-    selectedKeys.forEach(k => {
-      const dates = ASSETS[k].data.map(d=>d[0]);
-      if(minDate === null || dates[0] < minDate) minDate = dates[0];
-      if(maxDate === null || dates[dates.length-1] > maxDate) maxDate = dates[dates.length-1];
-    });
-    if(btn.dataset.preset === "all"){
-      fromEl.value = minDate; toEl.value = maxDate;
-    } else {
-      // Aproximamos "días hábiles" contando hacia atrás sobre el calendario real
-      const n = btn.dataset.preset === "1m" ? 30 : 14;
-      const d = new Date(maxDate);
-      d.setDate(d.getDate() - n);
-      const approxFrom = d.toISOString().slice(0,10);
-      fromEl.value = approxFrom < minDate ? minDate : approxFrom;
-      toEl.value = maxDate;
-    }
+    syncHeaderAndRange();
+    render();
+  });
+});
+
+document.querySelectorAll("#maToggle button").forEach(btn => {
+  btn.addEventListener("click", () => {
+    const n = Number(btn.dataset.ma);
+    if(activeMAs.has(n)) activeMAs.delete(n); else activeMAs.add(n);
+    btn.classList.toggle("active", activeMAs.has(n));
     render();
   });
 });
@@ -805,8 +887,12 @@ document.querySelectorAll("#metricToggle button").forEach(btn => {
   });
 });
 
-fromEl.addEventListener("change", render);
-toEl.addEventListener("change", render);
+// Elegir fechas a mano desactiva el periodo marcado
+[fromEl, toEl].forEach(el => el.addEventListener("change", () => {
+  currentPreset = null;
+  highlightPreset();
+  render();
+}));
 
 function setStatus(state, text){
   statusDot.className = "status-dot" + (state ? " "+state : "");
