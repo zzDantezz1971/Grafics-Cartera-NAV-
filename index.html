@@ -240,7 +240,7 @@
 
 <div class="layout">
   <nav class="watchlist" id="watchlist">
-    <div class="watchlist-label">Activos <span style="color:var(--muted-2); text-transform:none; letter-spacing:0;">· toca para seleccionar varios</span></div>
+    <div class="watchlist-label">Activos <span style="color:var(--muted-2); text-transform:none; letter-spacing:0;">· toca para seleccionar uno</span></div>
   </nav>
 
   <main>
@@ -311,28 +311,11 @@ const SHEET_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vTZ6yiNNd
 
 // URL CSV publicada de la pestaña con los activos vigentes en Cartera.
 // La página toma como vigente cualquier ISIN que aparezca en esa pestaña
-// (en cualquier columna). Si no se puede descargar, se usa la lista de
-// respaldo CURRENT_HOLDINGS_ISINS de más abajo.
+// (en cualquier columna). Si no se puede descargar, la página muestra un error.
 const HOLDINGS_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vTZ6yiNNd0tk3SPTg2cOPNolIttJLmiFqEgmy2vnUTbTWLWhzeFhDwJvolPvCePNJc3I_nnApbmP3Pm/pub?gid=1349006636&single=true&output=csv";
 
 // Metadatos conocidos de cada activo (ISIN, moneda). Si aparece un activo
 // nuevo en la hoja que no está aquí, se muestra igualmente con datos genéricos.
-// ============================================================
-// RESPALDO de activos vigentes (por ISIN). Solo se usa si falla la
-// descarga de HOLDINGS_CSV_URL; normalmente la lista se lee de la hoja.
-// Última comprobación manual: 21/09/2026
-// ============================================================
-const FALLBACK_HOLDINGS_ISINS = new Set([
-  "IE00BZ4D7648", // Polar Capital
-  "LU1670707527", // M&G Europa
-  "LU1493953001", // T. Rowe Price Global
-  "IE00BP3QZB59", // iShares MSCI World
-  "IE00BK5BR626", // Vanguard FTSE World Acum.
-  "IE00BYZK4669", // iShares Ageing Population
-  "US46222L1089", // IONQ
-  "US0378331005"  // Apple
-]);
-
 const ASSET_META = {
   "Polar Capital":            { isin: "IE00BZ4D7648", currency: "€" },
   "M&G Europa":               { isin: "LU1670707527", currency: "€" },
@@ -353,8 +336,7 @@ const ASSET_META = {
   "DIP Paradigma":            { isin: "LU2388163516", currency: "€" }
 };
 
-let CURRENT_HOLDINGS_ISINS = FALLBACK_HOLDINGS_ISINS;
-let holdingsSource = "respaldo";
+let CURRENT_HOLDINGS_ISINS = new Set();
 
 let ASSETS = {};       // { key: { label, isin, currency, data:[[iso,nav,plus],...] } }
 let selectedKeys = new Set();
@@ -455,15 +437,15 @@ const ISIN_RE = /^[A-Z]{2}[A-Z0-9]{9}[0-9]$/;
 async function fetchHoldingsIsins(){
   const url = HOLDINGS_CSV_URL + (HOLDINGS_CSV_URL.includes("?") ? "&" : "?") + "_=" + Date.now();
   const res = await fetch(url, { cache: "no-store" });
-  if(!res.ok) throw new Error("HTTP " + res.status);
+  if(!res.ok) throw new Error("No se pudo cargar la pestaña de activos (HTTP " + res.status + "). Revisa que siga publicada.");
   const text = new TextDecoder("utf-8").decode(await res.arrayBuffer());
-  if(text.trim().startsWith("<")) throw new Error("no es CSV");
+  if(text.trim().startsWith("<")) throw new Error("La URL de la pestaña de activos no devuelve un CSV. Vuelve a publicarla en formato CSV.");
   const isins = new Set();
   parseCsv(text).forEach(row => (row || []).forEach(cell => {
     const v = (cell || "").trim().toUpperCase();
     if(ISIN_RE.test(v)) isins.add(v);
   }));
-  if(isins.size === 0) throw new Error("sin ISIN");
+  if(isins.size === 0) throw new Error("La pestaña de activos no contiene ningún ISIN.");
   return isins;
 }
 
@@ -554,12 +536,10 @@ function buildWatchlist(){
   });
 }
 
+// Selección de un único activo: tocar otro lo sustituye y tocar el
+// seleccionado lo deselecciona.
 function toggleAsset(key){
-  if(selectedKeys.has(key)){
-    if(selectedKeys.size > 1) selectedKeys.delete(key); // mantén siempre al menos 1 seleccionado
-  } else {
-    selectedKeys.add(key);
-  }
+  selectedKeys = selectedKeys.has(key) ? new Set() : new Set([key]);
   document.querySelectorAll(".ticker-item").forEach(el=>{
     el.classList.toggle("active", selectedKeys.has(el.dataset.key));
   });
@@ -571,7 +551,12 @@ function toggleAsset(key){
 // seleccionados (unión del rango de fechas disponible entre todos ellos).
 function syncHeaderAndRange(){
   const keys = [...selectedKeys];
-  if(keys.length === 0) return;
+  if(keys.length === 0){
+    document.getElementById("assetTitle").textContent = "Ningún activo seleccionado";
+    document.getElementById("assetIsin").textContent = "Elige un activo de la lista";
+    normalizeField.style.display = "none";
+    return;
+  }
 
   if(keys.length === 1){
     const a = ASSETS[keys[0]];
@@ -631,6 +616,9 @@ function render(){
   keys.forEach(k => { seriesByKey[k] = getFilteredData(k); });
 
   const anyData = keys.some(k => seriesByKey[k].length > 0);
+  emptyNote.textContent = keys.length === 0
+    ? "Selecciona un activo de la lista para ver su gráfico."
+    : "No hay datos suficientes en el rango seleccionado.";
   if(!anyData){
     emptyNote.style.display = "block";
     canvas.style.display = "none";
@@ -810,14 +798,7 @@ async function loadData(){
   document.getElementById("loadNote").style.display = "block";
   document.getElementById("navChart").style.display = "none";
   try{
-    try{
-      CURRENT_HOLDINGS_ISINS = await fetchHoldingsIsins();
-      holdingsSource = "hoja";
-    } catch(e){
-      console.warn("No se pudo leer la pestaña de activos vigentes, uso la lista de respaldo:", e);
-      CURRENT_HOLDINGS_ISINS = FALLBACK_HOLDINGS_ISINS;
-      holdingsSource = "respaldo";
-    }
+    CURRENT_HOLDINGS_ISINS = await fetchHoldingsIsins();
     const url = SHEET_CSV_URL + (SHEET_CSV_URL.includes("?") ? "&" : "?") + "_=" + Date.now();
     const res = await fetch(url, { cache: "no-store" });
     if(!res.ok) throw new Error("Respuesta HTTP " + res.status + ". Revisa que la hoja siga publicada.");
@@ -834,9 +815,8 @@ async function loadData(){
     ASSETS = parsed;
     document.getElementById("loadNote").style.display = "none";
     buildWatchlist();
-    // Mantén la selección previa si sigue existiendo tras recargar; si no, selecciona el primer activo
-    const validPrevious = [...selectedKeys].filter(k => ASSETS[k]);
-    selectedKeys = new Set(validPrevious.length ? validPrevious : [Object.keys(ASSETS).sort()[0]]);
+    // Mantén la selección previa si sigue existiendo tras recargar; si no, ninguna
+    selectedKeys = new Set([...selectedKeys].filter(k => ASSETS[k]));
     document.querySelectorAll(".ticker-item").forEach(el=>{
       el.classList.toggle("active", selectedKeys.has(el.dataset.key));
     });
@@ -844,8 +824,7 @@ async function loadData(){
     render();
 
     setStatus("ok", "Conectado");
-    document.getElementById("lastUpdate").textContent = "última carga: " + new Date().toLocaleTimeString("es-ES") +
-      (holdingsSource === "hoja" ? "" : " · activos vigentes: lista de respaldo");
+    document.getElementById("lastUpdate").textContent = "última carga: " + new Date().toLocaleTimeString("es-ES");
   } catch(err){
     setStatus("err", "Error de conexión");
     showError(err.message || String(err));
