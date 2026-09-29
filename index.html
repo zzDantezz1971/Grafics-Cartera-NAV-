@@ -273,6 +273,13 @@
             <button data-metric="rentabilidad">Rentabilidad</button>
           </div>
         </div>
+        <div class="field">
+          <label>Gráfico</label>
+          <div class="range-presets" id="chartTypeToggle">
+            <button data-chart-type="line" class="active">Líneas</button>
+            <button data-chart-type="bar">Barras</button>
+          </div>
+        </div>
         <div class="field" id="normalizeField" style="display:none;">
           <label for="normalizeToggle">Comparar en %</label>
           <label class="switch">
@@ -342,6 +349,7 @@ let ASSETS = {};       // { key: { label, isin, currency, data:[[iso,nav,plus],.
 let selectedKeys = new Set();
 let chart = null;
 let currentMetric = "nav"; // "nav" | "plusvalia"
+let currentChartType = "line"; // "line" | "bar"
 
 // Paleta de colores estable, uno por activo (por orden alfabético de key)
 const PALETTE = ["#4FAE7C","#D9A04A","#5B8FD9","#D9634F","#B47FD9","#4FC4C4","#D9C24F","#E08FB0","#7FA6D9","#8FD96A","#D97F4F","#6A8FD9"];
@@ -512,7 +520,9 @@ function buildAssetsFromCsv(text){
 
 function buildWatchlist(){
   watchlistEl.querySelectorAll(".ticker-item").forEach(el => el.remove());
-  const sorted = Object.entries(ASSETS).sort((a,b) => a[1].label.localeCompare(b[1].label, "es"));
+  // Mismo orden que la pestaña de activos (orden de aparición de cada ISIN)
+  const order = [...CURRENT_HOLDINGS_ISINS];
+  const sorted = Object.entries(ASSETS).sort((a,b) => order.indexOf(a[1].isin) - order.indexOf(b[1].isin));
   sorted.forEach(([key, a]) => {
     const first = a.data[0][1], last = a.data[a.data.length-1][1];
     const pct = first !== 0 ? ((last-first)/first*100) : 0;
@@ -680,6 +690,17 @@ function render(){
     });
 
     const color = colorFor(k);
+    if(currentChartType === "bar"){
+      return {
+        label: a.label,
+        data: data,
+        backgroundColor: color + "CC",
+        hoverBackgroundColor: color,
+        borderWidth: 0,
+        borderRadius: 2,
+        currency: a.currency
+      };
+    }
     return {
       label: a.label,
       data: data,
@@ -698,7 +719,7 @@ function render(){
 
   if(chart) chart.destroy();
   chart = new Chart(canvas.getContext("2d"), {
-    type: "line",
+    type: currentChartType,
     data: { labels: labels, datasets: datasets },
     options: {
       responsive: true,
@@ -738,7 +759,7 @@ function render(){
   });
 }
 
-document.querySelectorAll(".range-presets button").forEach(btn => {
+document.querySelectorAll(".range-presets button[data-preset]").forEach(btn => {
   btn.addEventListener("click", () => {
     if(selectedKeys.size === 0) return;
     // Usamos el rango combinado de todos los activos seleccionados
@@ -764,6 +785,15 @@ document.querySelectorAll(".range-presets button").forEach(btn => {
 });
 
 normalizeToggle.addEventListener("change", render);
+
+document.querySelectorAll("#chartTypeToggle button").forEach(btn => {
+  btn.addEventListener("click", () => {
+    if(currentChartType === btn.dataset.chartType) return;
+    currentChartType = btn.dataset.chartType;
+    document.querySelectorAll("#chartTypeToggle button").forEach(b => b.classList.toggle("active", b === btn));
+    render();
+  });
+});
 
 document.querySelectorAll("#metricToggle button").forEach(btn => {
   btn.addEventListener("click", () => {
