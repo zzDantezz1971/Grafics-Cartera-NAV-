@@ -301,7 +301,7 @@
   </main>
 </div>
 
-<footer>Fuente: hoja "Cartera inversiones" — pestaña Histórico (publicada como CSV), filtrada a los activos vigentes en Cartera · <span id="lastUpdate"></span></footer>
+<footer>Fuente: hoja "Cartera inversiones" — pestaña Histórico (publicada como CSV), filtrada a los activos vigentes de la pestaña de Cartera publicada · <span id="lastUpdate"></span></footer>
 
 <script>
 // ============================================================
@@ -309,16 +309,20 @@
 // ============================================================
 const SHEET_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vTZ6yiNNd0tk3SPTg2cOPNolIttJLmiFqEgmy2vnUTbTWLWhzeFhDwJvolPvCePNJc3I_nnApbmP3Pm/pub?gid=1871320927&single=true&output=csv";
 
+// URL CSV publicada de la pestaña con los activos vigentes en Cartera.
+// La página toma como vigente cualquier ISIN que aparezca en esa pestaña
+// (en cualquier columna). Si no se puede descargar, se usa la lista de
+// respaldo CURRENT_HOLDINGS_ISINS de más abajo.
+const HOLDINGS_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vTZ6yiNNd0tk3SPTg2cOPNolIttJLmiFqEgmy2vnUTbTWLWhzeFhDwJvolPvCePNJc3I_nnApbmP3Pm/pub?gid=1349006636&single=true&output=csv";
+
 // Metadatos conocidos de cada activo (ISIN, moneda). Si aparece un activo
 // nuevo en la hoja que no está aquí, se muestra igualmente con datos genéricos.
 // ============================================================
-// ACTIVOS VIGENTES EN CARTERA (por ISIN). Esta lista la mantiene
-// Claude a partir de la pestaña "Cartera" — pídele que la actualice
-// si compras o vendes algo, ya que la página no puede leer esa
-// pestaña por sí sola (no está publicada como CSV).
-// Última comprobación: 21/09/2026
+// RESPALDO de activos vigentes (por ISIN). Solo se usa si falla la
+// descarga de HOLDINGS_CSV_URL; normalmente la lista se lee de la hoja.
+// Última comprobación manual: 21/09/2026
 // ============================================================
-const CURRENT_HOLDINGS_ISINS = new Set([
+const FALLBACK_HOLDINGS_ISINS = new Set([
   "IE00BZ4D7648", // Polar Capital
   "LU1670707527", // M&G Europa
   "LU1493953001", // T. Rowe Price Global
@@ -348,6 +352,9 @@ const ASSET_META = {
   "BIOA":                     { isin: "US09077V1008", currency: "$" },
   "DIP Paradigma":            { isin: "LU2388163516", currency: "€" }
 };
+
+let CURRENT_HOLDINGS_ISINS = FALLBACK_HOLDINGS_ISINS;
+let holdingsSource = "respaldo";
 
 let ASSETS = {};       // { key: { label, isin, currency, data:[[iso,nav,plus],...] } }
 let selectedKeys = new Set();
@@ -440,6 +447,26 @@ function parseSpanishPercent(s){
   return parseSpanishNumber(s);
 }
 
+// Un ISIN: 2 letras de país + 9 alfanuméricos + 1 dígito de control.
+const ISIN_RE = /^[A-Z]{2}[A-Z0-9]{9}[0-9]$/;
+
+// Lee la pestaña de activos vigentes y devuelve el conjunto de ISIN que
+// contiene, sin depender del nombre ni la posición de la columna.
+async function fetchHoldingsIsins(){
+  const url = HOLDINGS_CSV_URL + (HOLDINGS_CSV_URL.includes("?") ? "&" : "?") + "_=" + Date.now();
+  const res = await fetch(url, { cache: "no-store" });
+  if(!res.ok) throw new Error("HTTP " + res.status);
+  const text = new TextDecoder("utf-8").decode(await res.arrayBuffer());
+  if(text.trim().startsWith("<")) throw new Error("no es CSV");
+  const isins = new Set();
+  parseCsv(text).forEach(row => (row || []).forEach(cell => {
+    const v = (cell || "").trim().toUpperCase();
+    if(ISIN_RE.test(v)) isins.add(v);
+  }));
+  if(isins.size === 0) throw new Error("sin ISIN");
+  return isins;
+}
+
 function buildAssetsFromCsv(text){
   const rows = parseCsv(text);
   if(rows.length < 2) throw new Error("La hoja parece vacía.");
@@ -462,7 +489,7 @@ function buildAssetsFromCsv(text){
     const row = rows[r];
     if(!row || row.length <= Math.max(idxFecha, idxNombre, idxNav)) continue;
     const name = (row[idxNombre] || "").trim();
-    const isinFromRow = idxIsin > -1 ? (row[idxIsin] || "").trim() : "";
+    const isinFromRow = idxIsin > -1 ? (row[idxIsin] || "").trim().toUpperCase() : "";
     const iso = parseSpanishDate(row[idxFecha]);
     const nav = parseSpanishNumber(row[idxNav]);
     const plus = idxPlus > -1 ? parseSpanishNumber(row[idxPlus]) : null;
@@ -783,6 +810,14 @@ async function loadData(){
   document.getElementById("loadNote").style.display = "block";
   document.getElementById("navChart").style.display = "none";
   try{
+    try{
+      CURRENT_HOLDINGS_ISINS = await fetchHoldingsIsins();
+      holdingsSource = "hoja";
+    } catch(e){
+      console.warn("No se pudo leer la pestaña de activos vigentes, uso la lista de respaldo:", e);
+      CURRENT_HOLDINGS_ISINS = FALLBACK_HOLDINGS_ISINS;
+      holdingsSource = "respaldo";
+    }
     const url = SHEET_CSV_URL + (SHEET_CSV_URL.includes("?") ? "&" : "?") + "_=" + Date.now();
     const res = await fetch(url, { cache: "no-store" });
     if(!res.ok) throw new Error("Respuesta HTTP " + res.status + ". Revisa que la hoja siga publicada.");
@@ -794,7 +829,7 @@ async function loadData(){
     if(text.trim().startsWith("<")) throw new Error("La URL no devuelve un CSV (parece HTML). Vuelve a publicar la hoja en formato CSV.");
 
     const parsed = buildAssetsFromCsv(text);
-    if(Object.keys(parsed).length === 0) throw new Error("No se encontraron filas de tus activos actuales (revisa CURRENT_HOLDINGS_ISINS en el código, o que Histórico tenga la columna ISIN).");
+    if(Object.keys(parsed).length === 0) throw new Error("No se encontraron filas de tus activos actuales (revisa la pestaña de activos vigentes, o que Histórico tenga la columna ISIN).");
 
     ASSETS = parsed;
     document.getElementById("loadNote").style.display = "none";
@@ -809,7 +844,8 @@ async function loadData(){
     render();
 
     setStatus("ok", "Conectado");
-    document.getElementById("lastUpdate").textContent = "última carga: " + new Date().toLocaleTimeString("es-ES");
+    document.getElementById("lastUpdate").textContent = "última carga: " + new Date().toLocaleTimeString("es-ES") +
+      (holdingsSource === "hoja" ? "" : " · activos vigentes: lista de respaldo");
   } catch(err){
     setStatus("err", "Error de conexión");
     showError(err.message || String(err));
