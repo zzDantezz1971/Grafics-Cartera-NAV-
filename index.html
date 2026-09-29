@@ -702,7 +702,16 @@ function render(){
     document.getElementById("statStart").textContent = fmtMetric(first, refCurrency);
     document.getElementById("statEnd").textContent = fmtMetric(last, refCurrency);
     const changeEl = document.getElementById("statChange");
-    changeEl.textContent = (up?"+":"") + fmtMetric(change, refCurrency) + "  (" + (up?"+":"") + changePct.toFixed(2) + "%)";
+    // El % relativo solo tiene sentido con NAV. En Rentabilidad la diferencia
+    // se da en puntos porcentuales, y en Plusvalía basta el importe (partir de
+    // una plusvalía de 0 o negativa daría porcentajes sin sentido).
+    if(currentMetric === "rentabilidad"){
+      changeEl.textContent = (up?"+":"") + change.toLocaleString("es-ES", {minimumFractionDigits:2, maximumFractionDigits:2}) + " p.p.";
+    } else if(currentMetric === "plusvalia"){
+      changeEl.textContent = (up?"+":"") + fmtMetric(change, refCurrency);
+    } else {
+      changeEl.textContent = (up?"+":"") + fmtMetric(change, refCurrency) + "  (" + (up?"+":"") + changePct.toLocaleString("es-ES", {minimumFractionDigits:2, maximumFractionDigits:2}) + "%)";
+    }
     changeEl.style.color = up ? "var(--up)" : "var(--down)";
     document.getElementById("statRange").textContent = fmtMetric(min, refCurrency) + " / " + fmtMetric(max, refCurrency);
   }
